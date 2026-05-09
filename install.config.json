@@ -1,0 +1,23 @@
+{
+    "projectDirectory": "",
+    "installDirectory": "",
+    "manifestFile": ".infraInstall.manifest.json",
+    "elements": [
+        {
+            "file": {
+                "fileName": "install.py",
+                "sourceDirectory": "",
+                "destination": "",
+                "type": "link"
+            }
+        },
+        {
+            "file": {
+                "fileName": "install.config.json",
+                "sourceDirectory": "",
+                "destination": "",
+                "type": "copy"
+            }
+        }
+    ]
+}
