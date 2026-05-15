@@ -13,6 +13,8 @@ argument-hint: Provide the specification for the module that needs unit testing.
 
 # Instructions
 - Review the specification provided by the user for the module that needs unit testing.
+- Add suggestions to clarify behavior for positive senarios, negative scenarios, and edge cases if they are not already included in the specification.
+- Review the specification with the user and ensure all scenarios are covered.
 - Propose a plan for creating unit tests based on the specification. This plan should include identifying the functions or classes that need to be tested, determining the expected inputs and outputs, and outlining the structure of the test cases.
 - Review the plan with the user. If the user approves the plan, proceed to the next step. If the user has feedback or suggestions for improvement, revise the plan accordingly and review it again with the user until it is approved.
 - The create python based unit test to verify that the python module meets the specification.

@@ -111,9 +111,22 @@ class InstallationTracker:
         if not self.manifestPath.exists():
             return False
 
-        with open(self.manifestPath, "r") as f:
-            data: dict[str, Any] = json.load(f)
-            self.installedItems = cast(list[dict[str, str]], data.get("installed", []))
+        try:
+            with open(self.manifestPath, "r") as f:
+                data: Any = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Manifest JSON parse error: {e}") from e
+        except OSError as e:
+            raise ValueError(f"Unable to read manifest file: {e}") from e
+
+        if not isinstance(data, dict):
+            raise ValueError("Manifest content must be a JSON object")
+
+        installedItems: Any = data.get("installed", [])
+        if not isinstance(installedItems, list):
+            raise ValueError("Manifest field 'installed' must be an array")
+
+        self.installedItems = cast(list[dict[str, str]], installedItems)
         return True
 
 
@@ -146,10 +159,16 @@ class Installer:
 
         try:
             with open(self.configPath, "r") as f:
-                data: dict[str, Any] = json.load(f)
+                data: Any = json.load(f)
+                if not isinstance(data, dict):
+                    print("Error: Config must be a JSON object")
+                    return False
                 self.config = cast(InstallConfig, data)
         except json.JSONDecodeError as e:
             print(f"Error: Invalid JSON in config file: {e}")
+            return False
+        except OSError as e:
+            print(f"Error: Unable to read config file: {e}")
             return False
 
         return True
@@ -164,18 +183,138 @@ class Installer:
         if self.config is None:
             return False
 
-        projectDirStr: str = self.config.get("projectDirectory", "")
+        projectDirStr: str = self.config["projectDirectory"]
 
         if projectDirStr == "":
             self.projectDir = self.scriptDir.parent
         else:
-            self.projectDir = self.scriptDir.joinpath(projectDirStr)
+            projectPath: Path = Path(projectDirStr)
+            if projectPath.is_absolute():
+                print("Error: projectDirectory must be a relative path")
+                return False
+            if ".." in projectPath.parts:
+                print("Error: projectDirectory must not contain path traversal '..'")
+                return False
+
+            self.projectDir = self.scriptDir.joinpath(projectPath)
 
         if not self.projectDir.exists():
             print(f"Error: Project directory not found at {self.projectDir}")
             return False
 
         return True
+
+    @staticmethod
+    def validateConfig(configData: InstallConfig) -> None:
+        """
+        Validate configuration structure and values required for installation.
+
+        Args:
+            configData: Parsed install configuration
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        requiredTopLevelKeys: tuple[str, ...] = (
+            "projectDirectory",
+            "installDirectory",
+            "manifestFile",
+            "elements",
+        )
+        missingKeys: list[str] = [
+            key for key in requiredTopLevelKeys if key not in configData
+        ]
+        if missingKeys:
+            missingKeysDisplay: str = ", ".join(missingKeys)
+            raise ValueError(f"config is missing required key(s): {missingKeysDisplay}")
+
+        projectDirectory: Any = configData["projectDirectory"]
+        installDirectory: Any = configData["installDirectory"]
+        manifestFile: Any = configData["manifestFile"]
+        elementsValue: Any = configData["elements"]
+
+        if not isinstance(projectDirectory, str):
+            raise ValueError("'projectDirectory' must be a string")
+        if not isinstance(installDirectory, str):
+            raise ValueError("'installDirectory' must be a string")
+        if not isinstance(manifestFile, str):
+            raise ValueError("'manifestFile' must be a string")
+        if not isinstance(elementsValue, list):
+            raise ValueError("'elements' must be an array")
+
+        elements: list[dict[str, Any]] = cast(list[dict[str, Any]], elementsValue)
+        if len(elements) == 0:
+            raise ValueError("elements array is empty; nothing to install")
+
+        for element in elements:
+            hasFile: bool = "file" in element
+            hasDirectory: bool = "directory" in element
+            if hasFile == hasDirectory:
+                raise ValueError(
+                    "invalid element type found; each element must contain exactly one of 'file' or 'directory'"
+                )
+
+            if hasFile:
+                fileElementRaw: Any = element["file"]
+                if not isinstance(fileElementRaw, dict):
+                    raise ValueError("file element must be an object")
+
+                requiredFileKeys: tuple[str, ...] = (
+                    "fileName",
+                    "sourceDirectory",
+                    "destination",
+                    "type",
+                )
+                for key in requiredFileKeys:
+                    if key not in fileElementRaw:
+                        raise ValueError(f"file element is missing required key '{key}'")
+
+                fileName: Any = fileElementRaw["fileName"]
+                sourceDirectory: Any = fileElementRaw["sourceDirectory"]
+                destination: Any = fileElementRaw["destination"]
+                fileType: Any = fileElementRaw["type"]
+
+                if not isinstance(fileName, str) or fileName == "":
+                    raise ValueError("file element 'fileName' must be a non-empty string")
+                if not isinstance(sourceDirectory, str):
+                    raise ValueError("file element 'sourceDirectory' must be a string")
+                if not isinstance(destination, str):
+                    raise ValueError("file element 'destination' must be a string")
+                if fileType not in ("copy", "link"):
+                    raise ValueError("file element 'type' must be either 'copy' or 'link'")
+
+            if hasDirectory:
+                directoryElementRaw: Any = element["directory"]
+                if not isinstance(directoryElementRaw, dict):
+                    raise ValueError("directory element must be an object")
+
+                requiredDirectoryKeys: tuple[str, ...] = (
+                    "sourceName",
+                    "destinationName",
+                    "type",
+                )
+                for key in requiredDirectoryKeys:
+                    if key not in directoryElementRaw:
+                        raise ValueError(
+                            f"directory element is missing required key '{key}'"
+                        )
+
+                sourceName: Any = directoryElementRaw["sourceName"]
+                destinationName: Any = directoryElementRaw["destinationName"]
+                directoryType: Any = directoryElementRaw["type"]
+
+                if not isinstance(sourceName, str) or sourceName == "":
+                    raise ValueError(
+                        "directory element 'sourceName' must be a non-empty string"
+                    )
+                if not isinstance(destinationName, str):
+                    raise ValueError(
+                        "directory element 'destinationName' must be a string"
+                    )
+                if directoryType not in ("copy", "link"):
+                    raise ValueError(
+                        "directory element 'type' must be either 'copy' or 'link'"
+                    )
 
     def install(self) -> bool:
         """
@@ -187,29 +326,36 @@ class Installer:
         if not self.loadConfig():
             return False
 
+        try:
+            self.validateConfig(cast(InstallConfig, self.config))
+        except ValueError as e:
+            print(f"Error: {e}")
+            return False
+
         if not self.resolveProjectDirectory():
             return False
 
-        manifestFileName: str = self.config.get("manifestFile", "")
+        manifestFileName: str = self.config["manifestFile"]
         if manifestFileName:
-            manifestPath: Path = Path.home().joinpath(manifestFileName)
+            manifestPath: Path = self.projectDir.joinpath(manifestFileName)
         else:
             manifestPath = None
 
-        if manifestPath:
-            self.tracker = InstallationTracker(manifestPath)
-        else:
-            self.tracker = InstallationTracker(Path("/tmp/dummy"))
+        self.tracker = InstallationTracker(manifestPath) if manifestPath else None
 
-        installDir: str = self.config.get("installDirectory", "")
+        installDir: str = self.config["installDirectory"]
         if installDir:
             targetBaseDir: Path = self.projectDir.joinpath(installDir)
         else:
             targetBaseDir = self.projectDir
 
-        targetBaseDir.mkdir(parents=True, exist_ok=True)
+        try:
+            targetBaseDir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"Error creating destination directory '{targetBaseDir}': {e}")
+            return False
 
-        elements: list[dict[str, Any]] = self.config.get("elements", [])
+        elements: list[dict[str, Any]] = cast(list[dict[str, Any]], self.config["elements"])
         for element in elements:
             if "file" in element:
                 fileElem: FileElement = cast(FileElement, element["file"])
@@ -221,7 +367,11 @@ class Installer:
                     return False
 
         if manifestPath and self.tracker:
-            self.tracker.saveManifest()
+            try:
+                self.tracker.saveManifest()
+            except (OSError, IOError, TypeError, ValueError) as e:
+                print(f"Error writing manifest file '{manifestPath}': {e}")
+                return False
 
         print("Installation completed successfully!")
         return True
@@ -346,15 +496,30 @@ class Installer:
         if not self.loadConfig():
             return False
 
-        manifestFileName: str = self.config.get("manifestFile", "")
+        try:
+            self.validateConfig(cast(InstallConfig, self.config))
+        except ValueError as e:
+            print(f"Error: {e}")
+            return False
+
+        if not self.resolveProjectDirectory():
+            return False
+
+        manifestFileName: str = self.config["manifestFile"]
         if not manifestFileName:
             print("Error: No manifestFile defined in config")
             return False
 
-        manifestPath: Path = Path.home().joinpath(manifestFileName)
+        manifestPath: Path = self.projectDir.joinpath(manifestFileName)
         self.tracker = InstallationTracker(manifestPath)
 
-        if not self.tracker.loadManifest():
+        try:
+            manifestLoaded: bool = self.tracker.loadManifest()
+        except ValueError as e:
+            print(f"Error: {e}")
+            return False
+
+        if not manifestLoaded:
             print(f"Error: Manifest file not found at {manifestPath}")
             return False
 
