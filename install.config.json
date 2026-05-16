@@ -8,7 +8,7 @@
                 "fileName": "install.py",
                 "sourceDirectory": "",
                 "destination": "",
-                "type": "link"
+                "type": "copy"
             }
         },
         {
