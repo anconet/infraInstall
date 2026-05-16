@@ -48,7 +48,7 @@ The installer must read the install.config.json to decide how to install the fil
 **manifestFile**
 - This key defines the name of the manifest file to create.
 - The manifestFile should be placed in projectDirectory
-- If this value is blank then no manifestFile should be created.
+- If this value is blank then the script must exit with non-zero status and warn the user.
 
 **elements**
 - This key defines the array of items to be installed.
@@ -103,7 +103,7 @@ The installer must read the install.config.json to decide how to install the fil
 - install.py should have two options install or uninstall
 #### Install
 - For the install option, install.py should install based the install.config.json file.
-- If the manifest file name is specified in install.config.json, the install should create the manifest file in the projectDirectory (as specified in the manifestFile definition above).
+- The install should create the manifest file in the projectDirectory (as specified in the manifestFile definition above).
 - If an element installation fails, the install will stop processing remaining elements. Previously installed items are NOT rolled back. The installer will exit with non-zero status and report failure.
 - If the destination parent path cannot be created (for example due to permissions), install.py must exit with non-zero status and print the OS error.
 - If manifest writing fails, install.py must exit with non-zero status and report the write error. Previously installed items are NOT rolled back.

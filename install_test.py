@@ -626,6 +626,21 @@ def test_install_fails_for_invalid_top_level_value_types(
     assert result.returncode != 0
 
 
+def test_install_fails_when_manifest_file_is_empty(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["manifestFile"] = ""
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode != 0
+
+
 def test_install_fails_when_project_directory_does_not_exist(tmp_path: Path) -> None:
     sandbox = tmp_path / "parent_repo"
     module_dir = sandbox / "infraInstall"

@@ -239,6 +239,8 @@ class Installer:
             raise ValueError("'installDirectory' must be a string")
         if not isinstance(manifestFile, str):
             raise ValueError("'manifestFile' must be a string")
+        if manifestFile == "":
+            raise ValueError("'manifestFile' must be a non-empty string")
         if not isinstance(elementsValue, list):
             raise ValueError("'elements' must be an array")
 
