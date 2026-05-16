@@ -54,6 +54,14 @@ The installer must read the install.config.json to decide how to install the fil
 - If this value is blank then the script must exit with non-zero status and warn the user.
 - This value must be a relative file path (not absolute). Path traversal references (e.g., ../) are not allowed.
 
+### Manifest Format and Path Rules
+- The manifest records the installed destination paths needed for uninstall.
+- Every path entry in the manifest must be a relative path from the install.py script directory.
+- Absolute paths are not allowed in manifest entries.
+- Path traversal references (e.g., ../) are not allowed in manifest entries.
+- During uninstall, each manifest path is resolved relative to the install.py script directory.
+- If the manifest contains an absolute path or traversal path, uninstall must exit with non-zero status and report the manifest as invalid.
+
 **elements**
 - This key defines the array of items to be installed.
 - If the array is empty then the script should exit and the user should be warned.
@@ -108,6 +116,7 @@ The installer must read the install.config.json to decide how to install the fil
 #### Install
 - For the install option, install.py should install based the install.config.json file.
 - The install should create the manifest file in the projectDirectory (as specified in the manifestFile definition above).
+- Paths written to the manifest must be relative paths from the install.py script directory. Absolute paths are not allowed in manifest entries.
 - If an element installation fails, the install will stop processing remaining elements. Previously installed items are NOT rolled back. The installer will exit with non-zero status and report failure.
 - If the destination parent path cannot be created (for example due to permissions), install.py must exit with non-zero status and print the OS error.
 - If manifest writing fails, install.py must exit with non-zero status and report the write error. Previously installed items are NOT rolled back.
@@ -117,6 +126,8 @@ The installer must read the install.config.json to decide how to install the fil
 - For the uninstall option, install.py should remove the files it created in the parent repo.
 - If the manifest file is missing during uninstall, install.py must exit with non-zero status and report that the manifest was not found.
 - If the manifest file is malformed during uninstall, install.py must exit with non-zero status and report the parse error.
+- Uninstall must resolve manifest entries as paths relative to the install.py script directory.
+- If a manifest entry path is absolute, uninstall must exit with non-zero status and report the manifest as invalid.
 - If destination paths listed in the manifest are already missing during uninstall, install.py should continue processing remaining entries and still succeed.
 - If config is changed to point at a different manifest path than the one used during install and that manifest does not exist, uninstall must exit with non-zero status and report manifest not found. No installed items should be removed in that case.
 - Uninstall is not idempotent: after a successful uninstall removes the manifest, a second uninstall with the same config should fail with non-zero status because the manifest is missing.

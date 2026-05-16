@@ -60,37 +60,51 @@ class InstallationTracker:
             manifestPath: Path where manifest file will be stored
         """
         self.manifestPath: Path = manifestPath
-        self.installedItems: list[dict[str, str]] = []
+        self.installedItems: list[dict[str, Any]] = []
 
-    def addFile(self, sourceFile: Path, destinationFile: Path) -> None:
+    def addFile(
+        self,
+        sourceFile: str,
+        destinationFile: str,
+        destinationBase: Literal["scriptDir", "projectDir"],
+    ) -> None:
         """
         Record an installed file.
 
         Args:
-            sourceFile: Path to source file
-            destinationFile: Path to installed file
+            sourceFile: Source file path stored in manifest
+            destinationFile: Destination file path stored in manifest
+            destinationBase: Base path used to resolve destination during uninstall
         """
         self.installedItems.append(
             {
                 "type": "file",
-                "source": str(sourceFile),
-                "destination": str(destinationFile),
+                "source": sourceFile,
+                "destination": destinationFile,
+                "destinationBase": destinationBase,
             }
         )
 
-    def addDirectory(self, sourceDir: Path, destinationDir: Path) -> None:
+    def addDirectory(
+        self,
+        sourceDir: str,
+        destinationDir: str,
+        destinationBase: Literal["scriptDir", "projectDir"],
+    ) -> None:
         """
         Record an installed directory.
 
         Args:
-            sourceDir: Path to source directory
-            destinationDir: Path to installed directory
+            sourceDir: Source directory path stored in manifest
+            destinationDir: Destination directory path stored in manifest
+            destinationBase: Base path used to resolve destination during uninstall
         """
         self.installedItems.append(
             {
                 "type": "directory",
-                "source": str(sourceDir),
-                "destination": str(destinationDir),
+                "source": sourceDir,
+                "destination": destinationDir,
+                "destinationBase": destinationBase,
             }
         )
 
@@ -126,7 +140,7 @@ class InstallationTracker:
         if not isinstance(installedItems, list):
             raise ValueError("Manifest field 'installed' must be an array")
 
-        self.installedItems = cast(list[dict[str, str]], installedItems)
+        self.installedItems = cast(list[dict[str, Any]], installedItems)
         return True
 
 
@@ -393,6 +407,60 @@ class Installer:
         print("Installation completed successfully!")
         return True
 
+    def _manifestRelativeFromScriptDir(self, pathValue: Path) -> str:
+        """
+        Convert a path to a script-directory-relative manifest path.
+
+        Args:
+            pathValue: Absolute path to convert
+
+        Returns:
+            Relative path string from script directory
+
+        Raises:
+            ValueError: If path cannot be represented relative to script directory
+        """
+        try:
+            relativePath: Path = pathValue.relative_to(self.scriptDir)
+        except ValueError as e:
+            raise ValueError(
+                f"Path cannot be represented relative to script directory: {pathValue}"
+            ) from e
+
+        return str(relativePath)
+
+    def _manifestDestinationParts(
+        self, destinationPath: Path
+    ) -> tuple[str, Literal["scriptDir", "projectDir"]]:
+        """
+        Build manifest destination path and base hint for uninstall resolution.
+
+        Args:
+            destinationPath: Absolute destination path
+
+        Returns:
+            Tuple of relative destination path and destination base name
+
+        Raises:
+            ValueError: If destination cannot be represented relative to known bases
+        """
+        try:
+            relativeToScript: Path = destinationPath.relative_to(self.scriptDir)
+            return str(relativeToScript), "scriptDir"
+        except ValueError:
+            pass
+
+        if self.projectDir is not None:
+            try:
+                relativeToProject: Path = destinationPath.relative_to(self.projectDir)
+                return str(relativeToProject), "projectDir"
+            except ValueError:
+                pass
+
+        raise ValueError(
+            f"Destination cannot be represented relative to scriptDir or projectDir: {destinationPath}"
+        )
+
     def _installFile(self, fileElem: FileElement, baseDir: Path) -> bool:
         """
         Install a single file.
@@ -441,9 +509,11 @@ class Installer:
                 print(f"Copied: {sourceFile} -> {destFile}")
 
             if self.tracker:
-                self.tracker.addFile(sourceFile, destFile)
+                manifestSource: str = self._manifestRelativeFromScriptDir(sourceFile)
+                manifestDestination, manifestBase = self._manifestDestinationParts(destFile)
+                self.tracker.addFile(manifestSource, manifestDestination, manifestBase)
 
-        except (OSError, IOError) as e:
+        except (OSError, IOError, ValueError) as e:
             print(f"Error installing file {fileName}: {e}")
             return False
 
@@ -495,9 +565,15 @@ class Installer:
                 print(f"Copied directory: {sourceDir} -> {destDir}")
 
             if self.tracker:
-                self.tracker.addDirectory(sourceDir, destDir)
+                manifestSource = self._manifestRelativeFromScriptDir(sourceDir)
+                manifestDestination, manifestBase = self._manifestDestinationParts(destDir)
+                self.tracker.addDirectory(
+                    manifestSource,
+                    manifestDestination,
+                    manifestBase,
+                )
 
-        except (OSError, IOError, shutil.Error) as e:
+        except (OSError, IOError, shutil.Error, ValueError) as e:
             print(f"Error installing directory {sourceName}: {e}")
             return False
 
@@ -540,13 +616,36 @@ class Installer:
             print(f"Error: Manifest file not found at {manifestPath}")
             return False
 
-        installedItems: list[dict[str, str]] = self.tracker.installedItems
+        installedItems: list[dict[str, Any]] = self.tracker.installedItems
         for i in range(len(installedItems) - 1, -1, -1):
-            item: dict[str, str] = installedItems[i]
-            itemType: str = item.get("type", "")
-            destination: str = item.get("destination", "")
+            item: dict[str, Any] = installedItems[i]
+            itemType: str = str(item.get("type", ""))
 
-            destPath: Path = Path(destination)
+            destinationValue: Any = item.get("destination", "")
+            if not isinstance(destinationValue, str) or destinationValue == "":
+                print("Error: invalid manifest entry destination path")
+                return False
+
+            manifestDestinationPath: Path = Path(destinationValue)
+            if manifestDestinationPath.is_absolute():
+                print(
+                    "Error: invalid manifest entry destination path; absolute paths are not allowed"
+                )
+                return False
+            if ".." in manifestDestinationPath.parts:
+                print(
+                    "Error: invalid manifest entry destination path; traversal is not allowed"
+                )
+                return False
+
+            destinationBaseValue: Any = item.get("destinationBase", "scriptDir")
+            if destinationBaseValue == "projectDir":
+                destPath: Path = self.projectDir.joinpath(manifestDestinationPath)
+            elif destinationBaseValue == "scriptDir" or destinationBaseValue == "":
+                destPath = self.scriptDir.joinpath(manifestDestinationPath)
+            else:
+                print("Error: invalid manifest entry destination base")
+                return False
 
             try:
                 if itemType == "file":
@@ -561,7 +660,7 @@ class Installer:
                     print(f"Removed directory: {destPath}")
 
             except (OSError, IOError, shutil.Error) as e:
-                print(f"Error removing {destination}: {e}")
+                print(f"Error removing {destinationValue}: {e}")
                 return False
 
         try:

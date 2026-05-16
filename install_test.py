@@ -82,6 +82,24 @@ def _run_install_command(module_dir: Path, home_dir: Path, command: str) -> subp
     )
 
 
+def _run_install_command_from_cwd(
+    module_dir: Path,
+    home_dir: Path,
+    command: str,
+    cwd: Path,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    return subprocess.run(
+        [sys.executable, str(module_dir / "install.py"), command],
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _write_config(module_dir: Path, config_data: dict[str, object]) -> None:
     (module_dir / "install.config.json").write_text(
         json.dumps(config_data, indent=2), encoding="utf-8"
@@ -116,6 +134,46 @@ def test_install_creates_expected_files_links_and_manifest(tmp_path: Path) -> No
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert "installed" in manifest_data
     assert len(manifest_data["installed"]) == 3
+
+
+def test_install_writes_manifest_destinations_relative_to_install_py(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    manifest_path = paths["manifest_path"]
+
+    custom_project_dir = module_dir / "custom_project"
+    custom_project_dir.mkdir(parents=True, exist_ok=True)
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["projectDirectory"] = "custom_project"
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    manifest_data = json.loads(
+        (custom_project_dir / ".test-install.manifest.json").read_text(encoding="utf-8")
+    )
+    installed_entries = manifest_data.get("installed", [])
+    assert len(installed_entries) == 3
+
+    expected_destinations = {
+        "custom_project/installed/files/hello.txt",
+        "custom_project/installed/links/install.py",
+        "custom_project/installed/copied_dir",
+    }
+
+    actual_destinations = {entry.get("destination", "") for entry in installed_entries}
+    assert actual_destinations == expected_destinations
+
+    for entry in installed_entries:
+        destination = entry.get("destination", "")
+        destination_path = Path(destination)
+        assert not destination_path.is_absolute()
+
+    assert not manifest_path.exists()
 
 
 def test_install_overwrites_existing_manifest_file(tmp_path: Path) -> None:
@@ -370,6 +428,104 @@ def test_uninstall_fails_when_manifest_path_mismatches_config_change(tmp_path: P
     assert linked_file.exists()
     assert copied_dir.exists()
     assert original_manifest.exists()
+
+
+def test_uninstall_resolves_manifest_paths_relative_to_install_py_directory(
+    tmp_path: Path,
+) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    sandbox = paths["sandbox"]
+
+    custom_project_dir = module_dir / "custom_project"
+    custom_project_dir.mkdir(parents=True, exist_ok=True)
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["projectDirectory"] = "custom_project"
+    config_data["manifestFile"] = ".custom.manifest.json"
+    _write_config(module_dir, config_data)
+
+    install_result = _run_install_command(module_dir, home_dir, "install")
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+
+    manual_manifest = {
+        "installed": [
+            {
+                "type": "file",
+                "destination": "custom_project/installed/files/hello.txt",
+            },
+            {
+                "type": "file",
+                "destination": "custom_project/installed/links/install.py",
+            },
+            {
+                "type": "directory",
+                "destination": "custom_project/installed/copied_dir",
+            },
+        ]
+    }
+    manifest_path = custom_project_dir / ".custom.manifest.json"
+    manifest_path.write_text(json.dumps(manual_manifest, indent=2), encoding="utf-8")
+
+    uninstall_result = _run_install_command_from_cwd(
+        module_dir,
+        home_dir,
+        "uninstall",
+        sandbox,
+    )
+    assert uninstall_result.returncode == 0, uninstall_result.stdout + uninstall_result.stderr
+
+    assert not (custom_project_dir / "installed" / "files" / "hello.txt").exists()
+    assert not (custom_project_dir / "installed" / "links" / "install.py").exists()
+    assert not (custom_project_dir / "installed" / "copied_dir").exists()
+    assert not manifest_path.exists()
+
+
+def test_uninstall_fails_when_manifest_contains_absolute_destination_path(
+    tmp_path: Path,
+) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    manifest_path = paths["manifest_path"]
+
+    install_result = _run_install_command(module_dir, home_dir, "install")
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+
+    absolute_destination = str((paths["sandbox"] / "installed" / "files" / "hello.txt").resolve())
+    manifest_data = {
+        "installed": [{"type": "file", "destination": absolute_destination}]
+    }
+    manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    uninstall_result = _run_install_command(module_dir, home_dir, "uninstall")
+    assert uninstall_result.returncode != 0
+    combined_output = uninstall_result.stdout + uninstall_result.stderr
+    assert "invalid" in combined_output.lower() or "absolute" in combined_output.lower()
+
+
+def test_uninstall_fails_when_manifest_contains_traversal_destination_path(
+    tmp_path: Path,
+) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    manifest_path = paths["manifest_path"]
+
+    install_result = _run_install_command(module_dir, home_dir, "install")
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+
+    manifest_data = {
+        "installed": [{"type": "file", "destination": "../outside.txt"}]
+    }
+    manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    uninstall_result = _run_install_command(module_dir, home_dir, "uninstall")
+    assert uninstall_result.returncode != 0
+    combined_output = uninstall_result.stdout + uninstall_result.stderr
+    assert "invalid" in combined_output.lower() or "traversal" in combined_output.lower()
 
 
 def test_install_uses_non_empty_project_directory_for_outputs_and_manifest(
