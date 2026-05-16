@@ -38,17 +38,21 @@ The installer must read the install.config.json to decide how to install the fil
 **projectDirectory**
 - This key defines the directory to install the files.
 - If this value is "" then copy to the to the parent repo.
+- This value must be a relative path from the install.py script directory. Absolute paths are not allowed.
 - The resolved projectDirectory path must exist. If the path does not exist, the script must exit with non-zero status and warn the user.
 - Path traversal references (e.g., ../) are not allowed. The projectDirectory value must reference a path that exists relative to the script directory.
 
 **installDirectory**
 - This key defines a direcory in the parent directory to copy the files too.
 - If this value is "" then copy to the projectDirectory.
+- This value must be a relative path (not absolute). The install target path is resolved from projectDirectory.
+- Path traversal references (e.g., ../) are not allowed.
 
 **manifestFile**
 - This key defines the name of the manifest file to create.
 - The manifestFile should be placed in projectDirectory
 - If this value is blank then the script must exit with non-zero status and warn the user.
+- This value must be a relative file path (not absolute). Path traversal references (e.g., ../) are not allowed.
 
 **elements**
 - This key defines the array of items to be installed.

@@ -715,6 +715,66 @@ def test_install_fails_with_path_traversal_in_project_directory(tmp_path: Path) 
     assert result.returncode != 0
 
 
+def test_install_fails_when_install_directory_is_absolute(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["installDirectory"] = "/tmp/absolute-install-dir"
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode != 0
+
+
+def test_install_fails_with_path_traversal_in_install_directory(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["installDirectory"] = "../outside"
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode != 0
+
+
+def test_install_fails_when_manifest_file_is_absolute(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["manifestFile"] = "/tmp/absolute-manifest.json"
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode != 0
+
+
+def test_install_fails_with_path_traversal_in_manifest_file(tmp_path: Path) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["manifestFile"] = "../outside.manifest.json"
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode != 0
+
+
 def test_install_fails_when_source_file_missing(tmp_path: Path) -> None:
     paths = _build_sandbox(tmp_path)
     module_dir = paths["module_dir"]
@@ -932,21 +992,26 @@ def test_install_fails_when_destination_parent_cannot_be_created(tmp_path: Path)
     paths = _build_sandbox(tmp_path)
     module_dir = paths["module_dir"]
     home_dir = paths["home_dir"]
+    sandbox = paths["sandbox"]
 
     config_path = module_dir / "install.config.json"
     config_data = json.loads(config_path.read_text(encoding="utf-8"))
-    config_data["installDirectory"] = "/sys/infraInstall-test-denied"
+    config_data["projectDirectory"] = "custom_project"
+    config_data["installDirectory"] = "installed/subdir"
     _write_config(module_dir, config_data)
 
-    result = _run_install_command(module_dir, home_dir, "install")
+    custom_project = sandbox / "infraInstall" / "custom_project"
+    custom_project.mkdir(parents=True, exist_ok=True)
+    os.chmod(custom_project, 0o555)
 
-    assert result.returncode != 0
-    combined_output = result.stdout + result.stderr
-    assert (
-        "Read-only file system" in combined_output
-        or "Permission denied" in combined_output
-        or "Errno" in combined_output
-    )
+    try:
+        result = _run_install_command(module_dir, home_dir, "install")
+
+        assert result.returncode != 0
+        combined_output = result.stdout + result.stderr
+        assert "Permission denied" in combined_output or "Errno" in combined_output
+    finally:
+        os.chmod(custom_project, 0o755)
 
 
 def test_install_fails_when_manifest_write_fails_and_keeps_installed_items(
@@ -959,24 +1024,31 @@ def test_install_fails_when_manifest_write_fails_and_keeps_installed_items(
 
     config_path = module_dir / "install.config.json"
     config_data = json.loads(config_path.read_text(encoding="utf-8"))
-    config_data["manifestFile"] = "/sys/infraInstall-manifest-denied.json"
+    config_data["projectDirectory"] = "custom_project"
+    config_data["installDirectory"] = "installed"
+    config_data["manifestFile"] = "restricted/.test-install.manifest.json"
     _write_config(module_dir, config_data)
 
-    result = _run_install_command(module_dir, home_dir, "install")
+    custom_project = sandbox / "infraInstall" / "custom_project"
+    custom_project.mkdir(parents=True, exist_ok=True)
+    restricted_dir = custom_project / "restricted"
+    restricted_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(restricted_dir, 0o555)
 
-    assert result.returncode != 0
-    copied_file = sandbox / "installed" / "files" / "hello.txt"
-    linked_file = sandbox / "installed" / "links" / "install.py"
-    copied_dir = sandbox / "installed" / "copied_dir"
-    assert copied_file.exists()
-    assert linked_file.exists()
-    assert copied_dir.exists()
-    combined_output = result.stdout + result.stderr
-    assert (
-        "Read-only file system" in combined_output
-        or "Permission denied" in combined_output
-        or "Errno" in combined_output
-    )
+    try:
+        result = _run_install_command(module_dir, home_dir, "install")
+
+        assert result.returncode != 0
+        copied_file = custom_project / "installed" / "files" / "hello.txt"
+        linked_file = custom_project / "installed" / "links" / "install.py"
+        copied_dir = custom_project / "installed" / "copied_dir"
+        assert copied_file.exists()
+        assert linked_file.exists()
+        assert copied_dir.exists()
+        combined_output = result.stdout + result.stderr
+        assert "Permission denied" in combined_output or "Errno" in combined_output
+    finally:
+        os.chmod(restricted_dir, 0o755)
 
 
 def test_partial_install_failure_keeps_previously_installed_items(tmp_path: Path) -> None:

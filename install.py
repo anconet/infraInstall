@@ -244,6 +244,21 @@ class Installer:
         if not isinstance(elementsValue, list):
             raise ValueError("'elements' must be an array")
 
+        if installDirectory != "":
+            installDirectoryPath: Path = Path(installDirectory)
+            if installDirectoryPath.is_absolute():
+                raise ValueError("'installDirectory' must be a relative path")
+            if ".." in installDirectoryPath.parts:
+                raise ValueError(
+                    "'installDirectory' must not contain path traversal '..'"
+                )
+
+        manifestFilePath: Path = Path(manifestFile)
+        if manifestFilePath.is_absolute():
+            raise ValueError("'manifestFile' must be a relative path")
+        if ".." in manifestFilePath.parts:
+            raise ValueError("'manifestFile' must not contain path traversal '..'")
+
         elements: list[dict[str, Any]] = cast(list[dict[str, Any]], elementsValue)
         if len(elements) == 0:
             raise ValueError("elements array is empty; nothing to install")
