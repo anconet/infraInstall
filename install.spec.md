@@ -5,7 +5,7 @@ This is a specification for the install.py script.
 This repo is intended as a generic installer to help setup other repos. 
 This repo will be installed as a git submodule to a parent repo.
 
-The installer must read the install.config.json to decide how to install the files in the parent repo.
+The installer must read the install.config.json to decide how to install files into the resolved install target path.
 
 ## install.config.json definition
 ```json
@@ -18,7 +18,8 @@ The installer must read the install.config.json to decide how to install the fil
         "fileName":"",
         "sourceDirectory":"",
         "destination":"",
-        "type":"copy"|"link"}
+        "type":"copy"|"link",
+        "writePolicy":"overWrite"|"createCopy"|"skip"}
     },
     {"directory":{
         "sourceName":"",
@@ -37,13 +38,13 @@ The installer must read the install.config.json to decide how to install the fil
 
 ### projectDirectory
 - This key defines the directory to install the files.
-- If this value is "" then copy to the to the parent repo.
+- If this value is "" then install to the parent directory of the install.py script directory.
 - This value must be a relative path from the install.py script directory. Absolute paths are not allowed.
 - The resolved projectDirectory path must exist. If the path does not exist, the script must exit with non-zero status and warn the user.
 - Path traversal references (e.g., ../) are not allowed. The projectDirectory value must reference a path that exists relative to the script directory.
 
 ### installDirectory
-- This key defines a direcory in the parent directory to copy the files too.
+- This key defines a directory under projectDirectory to copy the files to.
 - If this value is "" then copy to the projectDirectory.
 - This value must be a relative path (not absolute). The install target path is resolved from projectDirectory.
 - Path traversal references (e.g., ../) are not allowed.
@@ -68,11 +69,12 @@ The installer must read the install.config.json to decide how to install the fil
 - If multiple elements resolve to the same destination path, elements are applied in config order and the later element determines the final state at that path. Install should not fail solely because of this conflict.
 - Unknown extra keys inside file or directory elements are ignored. Install should continue as long as required keys and values are valid.
 - Each array item can be either a "file" or a "directory". 
-- If the element is something other then file or directory, the script should exit the user should be warned.
+- If the element is something other than file or directory, the script should exit and the user should be warned.
 - The following are the definitions.
 
 #### file element
 - A key of file specifies a file operation.
+- A valid file element must include the keys: fileName, sourceDirectory, destination, type, and writePolicy.
 
 ##### fileName
 - The fileName key is the name of the file
@@ -86,21 +88,32 @@ The installer must read the install.config.json to decide how to install the fil
 - If this key is missing then exit and warn the user.
 - if the value is empty then the file can be found in the top level of the repo.
 
-##### destinationDirectory
-- The destinationDirectory key indicates a sub directory in parentDirectory that the file should be placed in.
+##### destination
+- The destination key indicates a subdirectory in the install target directory where the file should be placed.
 - If this key is missing then exit and warn the user.
-- if the value is empty then the file can be placed in the parent repo.
+- if the value is empty then the file is placed in the install target directory.
 
 ##### type
-- The type key indicates the type of connection from this repo to the parent repo. There are two options: copy or link.
-- A copy value means copy the file to the destinationDirectory.
-- A link value means create a linux symbolic link from file the destinationDirectory.
+- The type key indicates the type of connection from this repo to the install target directory. There are two options: copy or link.
+- A copy value means copy the file to the destination path.
+- A link value means create a linux symbolic link from the destination path to the source file.
 - If the key is missing then exit and warn the user.
 - If the value is not copy or link then exit and warn the user.
 - If a file element type is link and a destination file or symlink already exists, it will be removed first, then the symlink will be created. 
 - If removal fails due to permissions, the install will fail with an error message.
 - If symlink creation fails (due to permissions or platform limitations), the install must exit with non-zero status and print an error message.
-- If a destination file already exists during a copy operation, it will be overwritten.
+- If a destination file already exists during a copy operation, behavior is controlled by writePolicy.
+
+##### writePolicy
+- The writePolicy key determines what to do when a file already exists in the destination.
+- The writePolicy key can have three possible values: overWrite, createCopy, skip.
+- If the key is missing then exit and warn the user.
+- If the value is not correct then exit and warn the user.
+- For file type copy:
+    - If the value is overWrite, then the existing destination file should be overwritten.
+    - If the value is createCopy and a destination file already exists, the existing file should be left alone and a new file should be created with the extension .tmp.
+    - If the value is skip and a destination file already exists, no file operation should be performed for that element.
+- For file type link, writePolicy is ignored and link behavior is controlled by the type rules above.
 
 #### directory element
 - The directory key means we are performing a directory operation.
@@ -114,16 +127,16 @@ The installer must read the install.config.json to decide how to install the fil
 - The source directory must exist at the resolved source path. If it does not exist, the script must exit with non-zero status and warn the user.
 
 ##### destinationName
-- The destinationName is the name of the directory in the parent repo.
+- The destinationName is the name of the directory in the install target directory.
 - If this key is missing then exit and warn the user.
 - if the value is empty then use the sourceName for the destinationName.
 
 ##### type
 - The type key can either be copy or link.
-- A copy value means recursivily copy the directory to the parent repo.
-- A link value means recursicily create a linux symbolic link from the parent rep to the sourceName.
+- A copy value means recursively copy the directory to the install target directory.
+- A link value means recursively create a linux symbolic link in the install target directory to the sourceName.
 - If the key is missing then exit and warn the user.
-- If the value is not copy or key then exit and warn the user.
+- If the value is not copy or link then exit and warn the user.
 - If a directory element type is link and a destination directory or symlink already exists, it will be removed first, then the symlink will be created. If removal fails due to permissions, the install will fail with an error message.
 - If symlink creation fails (due to permissions or platform limitations), the install must exit with non-zero status and print an error message.
 - If a destination directory already exists during a copy operation, it will be deleted and replaced with the new directory.
@@ -132,17 +145,20 @@ The installer must read the install.config.json to decide how to install the fil
 - install.py should have two options install or uninstall
 
 ### Install
-- For the install option, install.py should install based the install.config.json file.
+- For the install option, install.py should install based on the install.config.json file.
 - The install should create the manifest file in the projectDirectory (as specified in the manifestFile definition above).
 - Paths written to the manifest must be relative paths from the install.py script directory. Absolute paths are not allowed in manifest entries.
+- For file copy operations, existing destination behavior must follow writePolicy (overWrite, createCopy, or skip).
+- If writePolicy is skip and the destination already exists, install should continue processing remaining elements.
+- If writePolicy is createCopy and a .tmp destination is created, that created path must be recorded in the manifest.
 - If an element installation fails, the install will stop processing remaining elements. Previously installed items are NOT rolled back. The installer will exit with non-zero status and report failure.
-- If the destination parent path cannot be created (for example due to permissions), install.py must exit with non-zero status and print the OS error.
+- If the destination path cannot be created (for example due to permissions), install.py must exit with non-zero status and print the OS error.
 - If manifest writing fails, install.py must exit with non-zero status and report the write error. Previously installed items are NOT rolled back.
 - If the manifest file already exists before install, it will be overwritten with a fresh manifest for the current run (not merged). Install should not fail solely because the file already exists.
 - Running install multiple times with the same config should be idempotent: each run should succeed and converge to the same installed state and manifest content for that config.
 
 ### Uninstall
-- For the uninstall option, install.py should remove the files it created in the parent repo.
+- For the uninstall option, install.py should remove the installed paths recorded in the manifest.
 - If the manifest file is missing during uninstall, install.py must exit with non-zero status and report that the manifest was not found.
 - If the manifest file is malformed during uninstall, install.py must exit with non-zero status and report the parse error.
 - Uninstall must resolve manifest entries as paths relative to the install.py script directory.
@@ -168,13 +184,15 @@ The installer must read the install.config.json to decide how to install the fil
         "fileName":"install.py",
         "sourceDirectory":"",
         "destination":"",
-        "type":"link"}
+        "type":"copy",
+        "writePolicy":"overWrite"}
     },
     {"file":{
         "fileName":"install.config.json",
         "sourceDirectory":"",
         "destination":"",
-        "type":"copy"}
+        "type":"copy",
+        "writePolicy":"overWrite"}
     },
     {"directory":{
         "sourceName":"",
