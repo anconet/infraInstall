@@ -23,6 +23,7 @@ class FileElement(TypedDict):
     sourceDirectory: str
     destination: str
     type: Literal["copy", "link"]
+    writePolicy: Literal["overWrite", "createCopy", "skip"]
 
 
 class DirectoryElement(TypedDict):
@@ -295,6 +296,7 @@ class Installer:
                     "sourceDirectory",
                     "destination",
                     "type",
+                    "writePolicy",
                 )
                 for key in requiredFileKeys:
                     if key not in fileElementRaw:
@@ -304,6 +306,7 @@ class Installer:
                 sourceDirectory: Any = fileElementRaw["sourceDirectory"]
                 destination: Any = fileElementRaw["destination"]
                 fileType: Any = fileElementRaw["type"]
+                writePolicy: Any = fileElementRaw["writePolicy"]
 
                 if not isinstance(fileName, str) or fileName == "":
                     raise ValueError("file element 'fileName' must be a non-empty string")
@@ -313,6 +316,10 @@ class Installer:
                     raise ValueError("file element 'destination' must be a string")
                 if fileType not in ("copy", "link"):
                     raise ValueError("file element 'type' must be either 'copy' or 'link'")
+                if writePolicy not in ("overWrite", "createCopy", "skip"):
+                    raise ValueError(
+                        "file element 'writePolicy' must be one of 'overWrite', 'createCopy', or 'skip'"
+                    )
 
             if hasDirectory:
                 directoryElementRaw: Any = element["directory"]
@@ -476,6 +483,7 @@ class Installer:
         sourceDir: str = fileElem.get("sourceDirectory", "")
         destination: str = fileElem.get("destination", "")
         fileType: str = fileElem.get("type", "copy")
+        writePolicy: str = fileElem.get("writePolicy", "overWrite")
 
         if not fileName:
             print("Error: fileName is required for file element")
@@ -497,6 +505,7 @@ class Installer:
 
         destDir.mkdir(parents=True, exist_ok=True)
         destFile: Path = destDir.joinpath(fileName)
+        finalDestination: Path = destFile
 
         try:
             if fileType == "link":
@@ -505,12 +514,22 @@ class Installer:
                 os.symlink(sourceFile.resolve(), destFile)
                 print(f"Linked: {sourceFile} -> {destFile}")
             else:  # copy
-                shutil.copy2(sourceFile, destFile)
-                print(f"Copied: {sourceFile} -> {destFile}")
+                if destFile.exists() or destFile.is_symlink():
+                    if writePolicy == "skip":
+                        print(f"Skipped copy (exists): {destFile}")
+                        return True
+                    if writePolicy == "createCopy":
+                        finalDestination = destDir.joinpath(f"{fileName}.tmp")
+                    else:
+                        finalDestination = destFile
+                shutil.copy2(sourceFile, finalDestination)
+                print(f"Copied: {sourceFile} -> {finalDestination}")
 
             if self.tracker:
                 manifestSource: str = self._manifestRelativeFromScriptDir(sourceFile)
-                manifestDestination, manifestBase = self._manifestDestinationParts(destFile)
+                manifestDestination, manifestBase = self._manifestDestinationParts(
+                    finalDestination
+                )
                 self.tracker.addFile(manifestSource, manifestDestination, manifestBase)
 
         except (OSError, IOError, ValueError) as e:

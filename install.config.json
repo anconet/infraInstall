@@ -8,7 +8,8 @@
                 "fileName": "install.py",
                 "sourceDirectory": "",
                 "destination": "",
-                "type": "copy"
+                "type": "copy",
+                "writePolicy": "overWrite"
             }
         },
         {
@@ -16,7 +17,8 @@
                 "fileName": "install.config.json",
                 "sourceDirectory": "",
                 "destination": "",
-                "type": "copy"
+                "type": "copy",
+                "writePolicy": "createCopy"
             }
         }
     ]

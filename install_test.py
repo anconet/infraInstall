@@ -38,6 +38,7 @@ def _build_sandbox(tmp_path: Path) -> dict[str, Path]:
                     "sourceDirectory": "source_files",
                     "destination": "files",
                     "type": "copy",
+                    "writePolicy": "overWrite",
                 }
             },
             {
@@ -46,6 +47,7 @@ def _build_sandbox(tmp_path: Path) -> dict[str, Path]:
                     "sourceDirectory": "",
                     "destination": "links",
                     "type": "link",
+                    "writePolicy": "overWrite",
                 }
             },
             {
@@ -242,6 +244,7 @@ def test_install_allows_duplicate_targets_and_later_element_wins(tmp_path: Path)
                 "sourceDirectory": "source_files",
                 "destination": "files",
                 "type": "copy",
+                "writePolicy": "overWrite",
             }
         },
         {
@@ -250,6 +253,7 @@ def test_install_allows_duplicate_targets_and_later_element_wins(tmp_path: Path)
                 "sourceDirectory": "source_alt",
                 "destination": "files",
                 "type": "copy",
+                "writePolicy": "overWrite",
             }
         },
     ]
@@ -570,6 +574,7 @@ def test_install_directory_blank_defaults_to_project_directory(tmp_path: Path) -
                 "sourceDirectory": "source_files",
                 "destination": "",
                 "type": "copy",
+                "writePolicy": "overWrite",
             }
         }
     ]
@@ -616,16 +621,56 @@ def test_install_exits_for_invalid_element_type(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "file_element",
     [
-        {"sourceDirectory": "source_files", "destination": "", "type": "copy"},
-        {"fileName": "", "sourceDirectory": "source_files", "destination": "", "type": "copy"},
-        {"fileName": "hello.txt", "destination": "", "type": "copy"},
-        {"fileName": "hello.txt", "sourceDirectory": "source_files", "type": "copy"},
-        {"fileName": "hello.txt", "sourceDirectory": "source_files", "destination": ""},
+        {
+            "sourceDirectory": "source_files",
+            "destination": "",
+            "type": "copy",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "",
+            "sourceDirectory": "source_files",
+            "destination": "",
+            "type": "copy",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "hello.txt",
+            "destination": "",
+            "type": "copy",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "hello.txt",
+            "sourceDirectory": "source_files",
+            "type": "copy",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "hello.txt",
+            "sourceDirectory": "source_files",
+            "destination": "",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "hello.txt",
+            "sourceDirectory": "source_files",
+            "destination": "",
+            "type": "copy",
+        },
         {
             "fileName": "hello.txt",
             "sourceDirectory": "source_files",
             "destination": "",
             "type": "invalid",
+            "writePolicy": "overWrite",
+        },
+        {
+            "fileName": "hello.txt",
+            "sourceDirectory": "source_files",
+            "destination": "",
+            "type": "copy",
+            "writePolicy": "invalid",
         },
     ],
 )
@@ -821,6 +866,7 @@ def test_install_fails_when_project_directory_does_not_exist(tmp_path: Path) -> 
                     "sourceDirectory": "source_files",
                     "destination": "",
                     "type": "copy",
+                    "writePolicy": "overWrite",
                 }
             }
         ],
@@ -858,6 +904,7 @@ def test_install_fails_with_path_traversal_in_project_directory(tmp_path: Path) 
                     "sourceDirectory": "source_files",
                     "destination": "",
                     "type": "copy",
+                    "writePolicy": "overWrite",
                 }
             }
         ],
@@ -978,17 +1025,105 @@ def test_install_overwrites_existing_file_on_copy(tmp_path: Path) -> None:
     assert copied_file.exists()
     assert copied_file.read_text(encoding="utf-8") == "hello world\n"
 
-    # Modify the copied file to have different content
-    copied_file.write_text("modified content\n", encoding="utf-8")
-    assert copied_file.read_text(encoding="utf-8") == "modified content\n"
 
-    # Run install again
+def test_install_write_policy_create_copy_creates_tmp_and_preserves_existing(
+    tmp_path: Path,
+) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    sandbox = paths["sandbox"]
+    manifest_path = paths["manifest_path"]
+
+    existing_file = sandbox / "installed" / "files" / "hello.txt"
+    existing_file.parent.mkdir(parents=True, exist_ok=True)
+    existing_file.write_text("existing content\n", encoding="utf-8")
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["elements"] = [
+        {
+            "file": {
+                "fileName": "hello.txt",
+                "sourceDirectory": "source_files",
+                "destination": "files",
+                "type": "copy",
+                "writePolicy": "createCopy",
+            }
+        }
+    ]
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert existing_file.read_text(encoding="utf-8") == "existing content\n"
+
+    tmp_file = sandbox / "installed" / "files" / "hello.txt.tmp"
+    assert tmp_file.exists()
+    assert tmp_file.read_text(encoding="utf-8") == "hello world\n"
+
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    installed_entries = manifest_data.get("installed", [])
+    assert len(installed_entries) == 1
+    assert installed_entries[0].get("destination", "").endswith("hello.txt.tmp")
+
+
+def test_install_write_policy_skip_leaves_existing_and_records_nothing(
+    tmp_path: Path,
+) -> None:
+    paths = _build_sandbox(tmp_path)
+    module_dir = paths["module_dir"]
+    home_dir = paths["home_dir"]
+    sandbox = paths["sandbox"]
+    manifest_path = paths["manifest_path"]
+
+    existing_file = sandbox / "installed" / "files" / "hello.txt"
+    existing_file.parent.mkdir(parents=True, exist_ok=True)
+    existing_file.write_text("existing content\n", encoding="utf-8")
+
+    config_path = module_dir / "install.config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    config_data["elements"] = [
+        {
+            "file": {
+                "fileName": "hello.txt",
+                "sourceDirectory": "source_files",
+                "destination": "files",
+                "type": "copy",
+                "writePolicy": "skip",
+            }
+        },
+        {
+            "file": {
+                "fileName": "install.py",
+                "sourceDirectory": "",
+                "destination": "links",
+                "type": "link",
+                "writePolicy": "overWrite",
+            }
+        },
+    ]
+    _write_config(module_dir, config_data)
+
+    result = _run_install_command(module_dir, home_dir, "install")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert existing_file.read_text(encoding="utf-8") == "existing content\n"
+
+    link_file = sandbox / "installed" / "links" / "install.py"
+    assert link_file.is_symlink()
+
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    installed_entries = manifest_data.get("installed", [])
+    assert len(installed_entries) == 1
+    assert installed_entries[0].get("type", "") == "file"
+    assert installed_entries[0].get("destination", "").endswith("installed/links/install.py")
+
+    # Run install again; skip should continue to preserve the existing destination file.
     result = _run_install_command(module_dir, home_dir, "install")
     assert result.returncode == 0, result.stdout + result.stderr
-
-    # Verify file was overwritten with original content
-    assert copied_file.exists()
-    assert copied_file.read_text(encoding="utf-8") == "hello world\n"
+    assert existing_file.read_text(encoding="utf-8") == "existing content\n"
 
 
 def test_install_replaces_existing_directory_on_copy(tmp_path: Path) -> None:
@@ -1225,6 +1360,7 @@ def test_partial_install_failure_keeps_previously_installed_items(tmp_path: Path
                     "sourceDirectory": "source_files",
                     "destination": "files",
                     "type": "copy",
+                    "writePolicy": "overWrite",
                 }
             },
             {
@@ -1233,6 +1369,7 @@ def test_partial_install_failure_keeps_previously_installed_items(tmp_path: Path
                     "sourceDirectory": "source_files",
                     "destination": "files",
                     "type": "copy",
+                    "writePolicy": "overWrite",
                 }
             },
             {
@@ -1241,6 +1378,7 @@ def test_partial_install_failure_keeps_previously_installed_items(tmp_path: Path
                     "sourceDirectory": "",
                     "destination": "links",
                     "type": "link",
+                    "writePolicy": "overWrite",
                 }
             },
         ],
