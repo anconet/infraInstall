@@ -520,6 +520,11 @@ class Installer:
                         return True
                     if writePolicy == "createCopy":
                         finalDestination = destDir.joinpath(f"{fileName}.tmp")
+                        print(
+                            "WARNING createCopy preserved existing destination "
+                            f"'{destFile}' and wrote new copy '{finalDestination}'; "
+                            "original file was not overwritten."
+                        )
                     else:
                         finalDestination = destFile
                 shutil.copy2(sourceFile, finalDestination)

@@ -112,6 +112,9 @@ The installer must read the install.config.json to decide how to install files i
 - For file type copy:
     - If the value is overWrite, then the existing destination file should be overwritten.
     - If the value is createCopy and a destination file already exists, the existing file should be left alone and a new file should be created with the extension .tmp.
+        - When createCopy creates a .tmp file, install.py must print exactly one warning line for that element using this format:
+            - WARNING createCopy preserved existing destination '<existing_destination>' and wrote new copy '<tmp_destination>'; original file was not overwritten.
+        - In this message, <existing_destination> must be the original destination path and <tmp_destination> must be the created .tmp path.
     - If the value is skip and a destination file already exists, no file operation should be performed for that element.
 - For file type link, writePolicy is ignored and link behavior is controlled by the type rules above.
 
@@ -151,6 +154,7 @@ The installer must read the install.config.json to decide how to install files i
 - For file copy operations, existing destination behavior must follow writePolicy (overWrite, createCopy, or skip).
 - If writePolicy is skip and the destination already exists, install should continue processing remaining elements.
 - If writePolicy is createCopy and a .tmp destination is created, that created path must be recorded in the manifest.
+- If writePolicy is createCopy and a .tmp destination is created, the warning line defined in the writePolicy section must be printed before continuing to the next element.
 - If an element installation fails, the install will stop processing remaining elements. Previously installed items are NOT rolled back. The installer will exit with non-zero status and report failure.
 - If the destination path cannot be created (for example due to permissions), install.py must exit with non-zero status and print the OS error.
 - If manifest writing fails, install.py must exit with non-zero status and report the write error. Previously installed items are NOT rolled back.

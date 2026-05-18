@@ -1063,6 +1063,13 @@ def test_install_write_policy_create_copy_creates_tmp_and_preserves_existing(
     assert tmp_file.exists()
     assert tmp_file.read_text(encoding="utf-8") == "hello world\n"
 
+    expected_warning = (
+        f"WARNING createCopy preserved existing destination '{existing_file}' and wrote new copy "
+        f"'{tmp_file}'; original file was not overwritten."
+    )
+    warning_lines = [line for line in result.stdout.splitlines() if line.startswith("WARNING ")]
+    assert warning_lines.count(expected_warning) == 1
+
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     installed_entries = manifest_data.get("installed", [])
     assert len(installed_entries) == 1
